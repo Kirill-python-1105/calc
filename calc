@@ -1,0 +1,103 @@
+# ===кредитный калькулятор=== 
+import streamlit as st
+import pandas as pd
+import datetime
+from datetime import date
+from dateutil.relativedelta import relativedelta
+
+def calc_pay_date(date_start_cred, date_end_cred, cnt_pay, pay_date):
+# функция расчета дат платежей. принимает даты начала и завершения кредита и номер дня в месяце, когда должен быть совершен платеж
+# возвращает даты платежей с учетом февралей(вис/не вис) + оплата в последний день кредита
+    lst_date = {}
+    date_pay_cur = date_start_cred
+    for i in range(cnt_pay):
+        # получаем дату платежа. проверяем, что такая дата в месяце есть иначе берем последний день месяца
+        cnt_day_mes = ((date(date_pay_cur.year, date_pay_cur.month, 1) + relativedelta(months=2)) - relativedelta(days=1)).day
+        if cnt_day_mes < day_pay:
+            day_pay_new = cnt_day_mes
+        else:
+            day_pay_new = day_pay
+        my_new = date_pay_cur + relativedelta(months=1)
+        date_pay_new = date(my_new.year, my_new.month, day_pay_new)
+        # последний платеж совершается в дату завершения кредита
+        if i == cnt_pay - 1:
+            date_pay_new = date_end_cred
+        lst_date[i] = date_pay_new
+        date_pay_cur = date_pay_new
+    return lst_date
+
+date_start = datetime.date.today()
+cnt_mes = 6
+date_end = date_start + relativedelta(months=cnt_mes)
+
+st.title('Мой кредитный калькулятор')
+sum_help = 'сумма кредита от 100 ед.валюты без дробной части'
+sum_cred = st.number_input('Сумма кредита:', min_value=100,  value=None, placeholder=sum_help, help=sum_help, format='%d' )
+proc_help = 'процентная ставка (% годовых) от 0.00'
+proc_cred = st.number_input('Процентная ставка (% годовых):', min_value=0.,  value=None, placeholder=proc_help, help=proc_help, format='%0.2f' )
+
+date_help = 'Укажите начальную дату кредита'
+date_start = st.date_input('Дата начала кредита', value=date_start, min_value= datetime.date.today(), format='DD.MM.YYYY')
+cnt_mes = st.number_input('Срок кредита (месяцев):', min_value=1, value=cnt_mes, placeholder='', format='%d')
+date_end = date_start + relativedelta(months=cnt_mes)
+type_pay = st.selectbox('Тип платежа', ['аннуитетный','дифференциальный'])
+with st.container(horizontal=True):
+    st.write('Дата начала:', date_start.strftime('%d.%m.%Y') )
+    st.write( 'Кол-во месяцев: ', 'не задано' if cnt_mes is None else cnt_mes)
+    st.write('Дата завершения:', 'не задано' if date_end is None else date_end.strftime('%d.%m.%Y'))
+    st.write('Сумма кредита:', 'не задано' if sum_cred is None else sum_cred)
+    st.write('Процентная ставка:', 'не задано' if proc_cred is None else proc_cred)
+if sum_cred == None or proc_cred == None or cnt_mes == None:
+    st.info('Заполнены не все поля')
+    st.stop()
+# расчетный блок
+part_proc = proc_cred/100/12
+if type_pay == 'аннуитетный':
+    sum_pay = round(sum_cred * (part_proc + part_proc/(pow((1 + part_proc),cnt_mes) - 1)))
+    st.write('Ежемесячный платеж:', sum_pay)
+elif type_pay == 'дифференциальный':
+    sum_pay = round(sum_cred/cnt_mes + sum_cred * part_proc, 2)
+    st.write('Сумма первого платежа:', sum_pay)
+else:
+    st.error('тип платежа не определен')
+    st.stop()
+day_pay = st.number_input('Номер дня месяца ежемесячного платежа:', min_value=1, max_value=31, value=None, placeholder='', format='%d')
+if day_pay is None:
+    st.warning('Укажите номер дня месяца ежемесячного платежа')
+    st.stop()
+if not st.button('Сформировать график платежей'):
+    st.stop()
+pr_bar = st.progress(0., 'Создание графика платежей')
+one_mes = 100/cnt_mes
+df = pd.DataFrame(columns=['Месяц', 'Дата платежа', 'Вх. долг', 'Сумма платежа', 'Гашение ОД', 'Гашение %', 'Долг после платежа'])
+ost_cur = sum_cred
+tmp_lst = []
+# вычисляем даты платежей
+lst_date = calc_pay_date(date_start, date_end, cnt_mes, day_pay)
+for i in range(cnt_mes):
+    prog = round(100 if (i+1)*one_mes > 100 else  (i+1)*one_mes)
+    pr_bar.progress(prog, f'Расчет ({prog}%): {i+1} месяц')
+    # расчет суммы платежа % и ОД
+    if type_pay == 'аннуитетный':
+        pay_proc = round(ost_cur * part_proc, 2)
+        sum_pay_n = round(sum_pay if sum_pay <= ost_cur else ost_cur, 2)
+        pay_od = round(sum_pay_n - pay_proc, 2)
+        ost_new = round((ost_cur - pay_od) if sum_pay == sum_pay_n else 0, 2)
+    else:
+        pay_proc = round(ost_cur * part_proc, 2)
+        if i == cnt_mes - 1:
+            pay_od = ost_cur
+        else:
+            pay_od = round(sum_cred / cnt_mes, 2)
+        sum_pay_n = round( pay_od + pay_proc, 2 )
+        ost_new = round(ost_cur - pay_od, 2)
+
+    tmp_lst.append({'Месяц': i + 1, 'Дата платежа': lst_date[i].strftime('%d.%m.%Y'), 'Вх. долг': ost_cur,
+                    'Сумма платежа': sum_pay_n,
+                    'Гашение ОД': pay_od, 'Гашение %': pay_proc, 'Долг после платежа': ost_new})
+    ost_cur = ost_new
+df = pd.concat([df, pd.DataFrame(tmp_lst)], ignore_index=True)
+st.dataframe(df, hide_index=True)
+itog_sum_proc = df['Гашение %'].sum()
+itog_proc = f'{itog_sum_proc/(sum_cred/100)}%'
+st.write('Сумма оплат процентов:', itog_sum_proc, 'или:', itog_proc )
